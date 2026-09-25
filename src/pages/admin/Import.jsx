@@ -60,7 +60,7 @@ export default function Import() {
             <span className="mono">category</span>, <span className="mono">description</span>, and optionally <span className="mono">code</span>.</p>
           <ul className="muted small" style={{ margin: 0, paddingLeft: 18 }}>
             <li>With a <b>code</b>, the row fills that exact QR code.</li>
-            <li>Without a code, the row fills the next blank code in print order. Download the list afterwards to see which product got which code.</li>
+            <li>Without a code, the row uses the next blank code in print order. If there are no blank codes left, the app creates fresh ones automatically so the import is not skipped.</li>
             <li>Importing again with the same codes updates them. It never changes samples already given.</li>
           </ul>
           <div className="row wrap">

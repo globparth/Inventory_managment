@@ -422,8 +422,23 @@ begin
       select * into prod from public.products
        where status = 'unassigned' order by seq limit 1 for update skip locked;
       if not found then
-        errs := errs || jsonb_build_object('row', i, 'name', nm, 'error', 'No blank codes left. Generate more first.');
-        continue;
+        begin
+          insert into public.products (code)
+          values (public.gen_code())
+          returning * into prod;
+        exception when unique_violation then
+          -- another import already created the same code; keep trying until we get a free one
+          loop
+            begin
+              insert into public.products (code)
+              values (public.gen_code())
+              returning * into prod;
+              exit;
+            exception when unique_violation then
+              null;
+            end;
+          end loop;
+        end;
       end if;
     end if;
 
