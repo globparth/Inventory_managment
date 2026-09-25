@@ -108,12 +108,12 @@ export default function Assign() {
     if (error) return setErr(error.message)
     if (!data?.ok) return setErr(data?.error || 'Could not assign this product.')
 
-    toast(`Assigned to ${trimmedName}`)
-    setCode('')
+    toast(`${trimmedCode} → ${trimmedName}`)
     setBlankCodes((rows) => rows.filter((item) => item.code !== trimmedCode))
 
-    // Keep the same product selected -- scanning the next label for the same
-    // product needs no re-picking -- and bump its running count right away.
+    // Bump the running count for this product so the list stays accurate,
+    // but always clear the form afterwards -- every code needs its own
+    // explicit pick, so a leftover selection can never get reused by mistake.
     setExisting((rows) => {
       const i = rows.findIndex((r) => r.name.toLowerCase() === trimmedName.toLowerCase())
       if (i === -1) {
@@ -124,8 +124,9 @@ export default function Assign() {
       copy[i] = { ...copy[i], assigned: copy[i].assigned + 1 }
       return copy
     })
-    setPicked(trimmedName)
-    setProductMode('existing')
+    setCode('')
+    setPicked('')
+    setForm({ name: '', category: '', description: '' })
   }
 
   if (loading) return <main className="page"><Spinner label="Loading blank codes" /></main>
