@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { distinctProducts } from '../../offline'
 import { extractCode } from '../../lib/util'
 import { supabase } from '../../supabase'
 import { Banner, Field, Spinner, useToast } from '../../ui.jsx'
@@ -12,6 +11,7 @@ export default function Assign() {
   const [code, setCode] = useState('')
   const [existing, setExisting] = useState([])
   const [picked, setPicked] = useState('')
+  const [productMode, setProductMode] = useState('manual')
   const [form, setForm] = useState({ name: '', category: '', description: '', total: '0' })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -23,13 +23,23 @@ export default function Assign() {
     async function load() {
       setLoading(true)
       try {
-        const [blankRes, catalog] = await Promise.all([
+        const [blankRes, productRes] = await Promise.all([
           supabase.from('products').select('code').eq('status', 'unassigned').order('seq').limit(200),
-          distinctProducts(),
+          supabase.from('products').select('name, category, description').eq('status', 'active').not('name', 'is', null).order('name').limit(200),
         ])
         if (blankRes.error) throw blankRes.error
+        if (productRes.error) throw productRes.error
         setBlankCodes(blankRes.data || [])
-        setExisting(catalog || [])
+
+        const seen = new Map()
+        for (const item of productRes.data || []) {
+          const name = (item.name || '').trim()
+          if (!name || seen.has(name)) continue
+          seen.set(name, { name, category: item.category || '', description: item.description || '' })
+        }
+        const rows = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
+        setExisting(rows)
+        if (rows.length === 0) setProductMode('manual')
       } catch (e) {
         setErr(e.message || 'Could not load blank codes.')
       } finally {
@@ -61,10 +71,19 @@ export default function Assign() {
   function pickExistingProduct(e) {
     const name = e.target.value
     setPicked(name)
-    if (!name) return
+    if (!name) {
+      setProductMode('manual')
+      return
+    }
     const item = existing.find((x) => x.name === name)
     if (!item) return
     setForm((s) => ({ ...s, name: item.name, category: item.category || '', description: item.description || '' }))
+    setProductMode('existing')
+  }
+
+  function startManualEntry() {
+    setPicked('')
+    setProductMode('manual')
   }
 
   async function save(e) {
@@ -138,13 +157,18 @@ export default function Assign() {
         </Field>
 
         {existing.length > 0 && (
-          <Field label="Existing product" htmlFor="assign-pick" hint="Optional — autofill the product details from a product already in the system.">
-            <select id="assign-pick" className="input" value={picked} onChange={pickExistingProduct}>
-              <option value="">Choose a saved product</option>
-              {existing.map((item) => (
-                <option key={item.name} value={item.name}>{item.name}{item.category ? ` (${item.category})` : ''}</option>
-              ))}
-            </select>
+          <Field label={productMode === 'existing' ? 'Use existing product' : 'Select product'} htmlFor="assign-pick" hint="Choose a product already listed in the app, or switch to manual entry below.">
+            <div className="row">
+              <select id="assign-pick" className="input grow" value={picked} onChange={pickExistingProduct}>
+                <option value="">{productMode === 'existing' ? 'Choose a saved product' : 'Select a product from the list'}</option>
+                {existing.map((item) => (
+                  <option key={item.name} value={item.name}>{item.name}{item.category ? ` (${item.category})` : ''}</option>
+                ))}
+              </select>
+              {productMode === 'existing' && (
+                <button type="button" className="btn ghost" onClick={startManualEntry}>Enter manually</button>
+              )}
+            </div>
           </Field>
         )}
 
@@ -168,9 +192,13 @@ export default function Assign() {
           <button type="button" className="btn ghost" onClick={() => {
             setCode('')
             setPicked('')
+            setProductMode(existing.length > 0 ? 'manual' : 'manual')
             setForm({ name: '', category: '', description: '', total: '0' })
             setErr('')
           }}>Clear</button>
+          {existing.length > 0 && productMode === 'manual' && (
+            <button type="button" className="btn ghost" onClick={() => setProductMode('existing')}>Use existing product</button>
+          )}
           <button className="btn primary grow" type="submit" disabled={busy || blankCodes.length === 0}>
             {busy ? 'Assigning…' : 'Assign product'}
           </button>
