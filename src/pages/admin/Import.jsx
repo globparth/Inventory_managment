@@ -31,13 +31,12 @@ export default function Import() {
 
   async function run() {
     setBusy(true); setErr(''); setResult(null); setProgress(0)
-    const all = { imported: 0, errors: [], mapping: [] }
+    const all = { imported: 0, errors: [] }
     for (let i = 0; i < parsed.items.length; i += CHUNK) {
       const chunk = parsed.items.slice(i, i + CHUNK)
-      const { data, error } = await supabase.rpc('bulk_import', { p_rows: chunk })
+      const { data, error } = await supabase.rpc('import_product_catalog', { p_rows: chunk })
       if (error) { setErr(`Stopped after ${all.imported} products: ${error.message}`); break }
       all.imported += data.imported
-      all.mapping.push(...data.mapping)
       all.errors.push(...data.errors.map((x) => ({ ...x, row: x.row + i + 1 })))   // +1 for header row
       setProgress(Math.min(1, (i + CHUNK) / parsed.items.length))
     }
@@ -46,22 +45,22 @@ export default function Import() {
   }
 
   const template = () => downloadText('sample-products-template.csv',
-    toCsv([['code', 'name', 'category', 'total_samples', 'description'],
-      ['', 'Basmati Rice 1121', 'Rice', 50, 'Extra long grain, aged 24 months'],
-      ['', 'Turmeric Finger', 'Spices', 30, 'Curcumin 3.5%']]))
+    toCsv([['name', 'category', 'description'],
+      ['Basmati Rice 1121', 'Rice', 'Extra long grain, aged 24 months'],
+      ['Turmeric Finger', 'Spices', 'Curcumin 3.5%']]))
 
   return (
     <main className="page wide">
-      <h1>Import products</h1>
+      <h1>Import product catalog</h1>
       <div className="two">
         <section className="card stack">
           <h2>1. Choose a CSV file</h2>
-          <p className="muted">One row per product. Columns: <span className="mono">name</span> (required), <span className="mono">total_samples</span>,{' '}
-            <span className="mono">category</span>, <span className="mono">description</span>, and optionally <span className="mono">code</span>.</p>
+          <p className="muted">One row per product. Columns: <span className="mono">name</span> (required),{' '}
+            <span className="mono">category</span>, <span className="mono">description</span>.</p>
           <ul className="muted small" style={{ margin: 0, paddingLeft: 18 }}>
-            <li>With a <b>code</b>, the row fills that exact QR code.</li>
-            <li>Without a code, the row uses the next blank code in print order. If there are no blank codes left, the app creates fresh ones automatically so the import is not skipped.</li>
-            <li>Importing again with the same codes updates them. It never changes samples already given.</li>
+            <li>This does not create or touch any QR codes. It only adds products to the pick-list you'll use when scanning a blank label.</li>
+            <li>Generate blank QR codes separately from <b>QR labels</b>, print and stick them on products, then scan each one and pick the product from the list on the <b>Assign</b> page.</li>
+            <li>Importing the same product name again just updates its category/description.</li>
           </ul>
           <div className="row wrap">
             <button className="btn ghost sm" onClick={template}>Download template</button>
@@ -73,14 +72,13 @@ export default function Import() {
         {parsed && (
           <section className="card stack">
             <h2>2. Check and import</h2>
-            <p><strong>{parsed.items.length}</strong> rows found in <span className="mono">{file?.name}</span>
-              {parsed.hasCode ? ' (with codes).' : ' (no code column, so blank codes are used in order).'}</p>
+            <p><strong>{parsed.items.length}</strong> rows found in <span className="mono">{file?.name}</span>.</p>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Samples</th></tr></thead>
+                <thead><tr><th>Name</th><th>Category</th><th>Description</th></tr></thead>
                 <tbody>
                   {parsed.items.slice(0, 5).map((r, i) => (
-                    <tr key={i}><td className="mono">{r.code}</td><td>{r.name}</td><td>{r.category}</td><td className="mono">{r.total_samples}</td></tr>
+                    <tr key={i}><td>{r.name}</td><td>{r.category}</td><td>{r.description}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -95,13 +93,8 @@ export default function Import() {
       {result && (
         <section className="card stack">
           <Banner kind={result.errors.length ? 'warn' : 'ok'}>
-            Imported {result.imported} products{result.errors.length ? `, ${result.errors.length} rows skipped.` : '.'}
+            Imported {result.imported} products{result.errors.length ? `, ${result.errors.length} rows skipped.` : '.'} They're now in the pick-list on the Assign page.
           </Banner>
-          {result.mapping.length > 0 && (
-            <button className="btn ghost" onClick={() => downloadText('product-code-list.csv', toCsv([['code', 'name'], ...result.mapping.map((m) => [m.code, m.name])]))}>
-              Download product and code list
-            </button>
-          )}
           {result.errors.length > 0 && (
             <div className="table-wrap"><table>
               <thead><tr><th>Row</th><th>Product</th><th>Problem</th></tr></thead>

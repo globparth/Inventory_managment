@@ -113,16 +113,18 @@ export function catalogAge() {
   try { return JSON.parse(localStorage.getItem(CATALOG_KEY) || 'null')?.ts || null } catch { return null }
 }
 
-// Distinct product names already in use, for the "existing product" dropdown
-// shown when claiming a blank QR code (a second box of the same product, say).
-// Tries a fresh fetch first so a product added moments ago is included; falls
-// back to whatever was last cached for offline use.
+// Products to pick from when claiming a blank QR code: the imported catalog
+// plus any product already in use on a printed code. Falls back to whatever
+// was last cached for offline use if the picker call itself fails.
 export async function distinctProducts() {
-  const { data, error } = await supabase.rpc('get_catalog')
-  const rows = !error && Array.isArray(data) ? data
-    : Object.values(JSON.parse(localStorage.getItem(CATALOG_KEY) || 'null')?.items || {}).map((v) => [null, ...v])
+  const { data, error } = await supabase.rpc('get_product_picker')
+  if (!error && Array.isArray(data)) {
+    return data.map((item) => ({ name: item.name, category: item.category || '', description: item.description || '' }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+  const rows = Object.values(JSON.parse(localStorage.getItem(CATALOG_KEY) || 'null')?.items || {})
   const seen = new Map()
-  for (const [, name, category, description] of rows) {
+  for (const [name, category, description] of rows) {
     if (name && !seen.has(name)) seen.set(name, { name, category: category || '', description: description || '' })
   }
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))

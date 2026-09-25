@@ -73,6 +73,22 @@ create table if not exists public.products (
 create index if not exists products_status_idx on public.products (status, seq);
 
 -- ---------------------------------------------------------------------
+-- 2b. Product catalog (a name/category/description list, imported from
+--     CSV, with NO code attached). Used only to fill in the "pick a
+--     product" dropdown when a blank QR code is scanned/assigned -- it
+--     never creates or consumes a code by itself.
+-- ---------------------------------------------------------------------
+create table if not exists public.product_catalog (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null,
+  category     text,
+  description  text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create unique index if not exists product_catalog_name_idx on public.product_catalog (lower(name));
+
+-- ---------------------------------------------------------------------
 -- 3. Sample log (one row per sample handed out)
 -- ---------------------------------------------------------------------
 create table if not exists public.sample_log (
@@ -102,12 +118,13 @@ create index if not exists sample_log_phone_idx   on public.sample_log (phone_ke
 -- 4. Security: nobody touches tables directly except admins reading.
 --    Everything else goes through the functions below.
 -- ---------------------------------------------------------------------
-alter table public.profiles   enable row level security;
-alter table public.products   enable row level security;
-alter table public.sample_log enable row level security;
+alter table public.profiles       enable row level security;
+alter table public.products       enable row level security;
+alter table public.product_catalog enable row level security;
+alter table public.sample_log     enable row level security;
 
-revoke all on public.profiles, public.products, public.sample_log from anon, authenticated;
-grant select on public.profiles, public.products, public.sample_log to authenticated;
+revoke all on public.profiles, public.products, public.product_catalog, public.sample_log from anon, authenticated;
+grant select on public.profiles, public.products, public.product_catalog, public.sample_log to authenticated;
 
 drop policy if exists "profiles: read own or admin" on public.profiles;
 create policy "profiles: read own or admin" on public.profiles
@@ -115,6 +132,10 @@ create policy "profiles: read own or admin" on public.profiles
 
 drop policy if exists "products: admin read" on public.products;
 create policy "products: admin read" on public.products
+  for select to authenticated using (public.is_admin());
+
+drop policy if exists "product_catalog: admin read" on public.product_catalog;
+create policy "product_catalog: admin read" on public.product_catalog
   for select to authenticated using (public.is_admin());
 
 drop policy if exists "sample_log: admin read" on public.sample_log;
@@ -374,21 +395,18 @@ begin
   return out;
 end $$;
 
--- 5i. Admin: bulk import from CSV rows.
---     Row with a "code"  -> fills / updates that code.
---     Row without a code -> fills the next blank code in print order.
-create or replace function public.bulk_import(p_rows jsonb)
+-- 5i. Admin: bulk import a product CATALOG from CSV rows (name / category /
+--     description only). This never touches QR codes -- it only fills in
+--     the "pick a product" dropdown shown when someone scans a blank code.
+--     Importing the same name again just updates its category/description.
+create or replace function public.import_product_catalog(p_rows jsonb)
 returns json language plpgsql security definer set search_path = public as $$
 declare
-  r        jsonb;
-  i        int := 0;
-  nm       text;
-  tot      int;
-  code_in  text;
-  prod     public.products%rowtype;
-  ok_n     int := 0;
-  errs     jsonb := '[]'::jsonb;
-  mapping  jsonb := '[]'::jsonb;
+  r    jsonb;
+  i    int := 0;
+  nm   text;
+  ok_n int := 0;
+  errs jsonb := '[]'::jsonb;
 begin
   if not public.is_admin() then
     raise exception 'Not authorised' using errcode = '42501';
@@ -402,64 +420,44 @@ begin
       continue;
     end if;
 
-    begin
-      tot := coalesce(nullif(trim(r->>'total_samples'), '')::int, 0);
-    exception when others then
-      tot := null;
-    end;
-    if tot is null or tot < 0 then
-      errs := errs || jsonb_build_object('row', i, 'name', nm, 'error', 'Sample count is not a valid number');
-      continue;
-    end if;
-
-    code_in := upper(nullif(trim(r->>'code'), ''));
-    if code_in is not null then
-      select * into prod from public.products where code = code_in for update;
-      if not found then
-        insert into public.products (code) values (code_in) returning * into prod;
-      end if;
-    else
-      select * into prod from public.products
-       where status = 'unassigned' order by seq limit 1 for update skip locked;
-      if not found then
-        begin
-          insert into public.products (code)
-          values (public.gen_code())
-          returning * into prod;
-        exception when unique_violation then
-          -- another import already created the same code; keep trying until we get a free one
-          loop
-            begin
-              insert into public.products (code)
-              values (public.gen_code())
-              returning * into prod;
-              exit;
-            exception when unique_violation then
-              null;
-            end;
-          end loop;
-        end;
-      end if;
-    end if;
-
-    if tot < prod.samples_given then
-      errs := errs || jsonb_build_object('row', i, 'name', nm, 'code', prod.code,
-                                          'error', 'Already given more samples than this total');
-      continue;
-    end if;
-
-    update public.products
-       set name = nm,
-           category = nullif(trim(coalesce(r->>'category', '')), ''),
-           description = nullif(trim(coalesce(r->>'description', '')), ''),
-           total_samples = tot, status = 'active', updated_at = now()
-     where id = prod.id;
+    insert into public.product_catalog (name, category, description)
+    values (nm, nullif(trim(coalesce(r->>'category', '')), ''),
+            nullif(trim(coalesce(r->>'description', '')), ''))
+    on conflict (lower(name)) do update
+      set category = excluded.category,
+          description = excluded.description,
+          updated_at = now();
 
     ok_n := ok_n + 1;
-    mapping := mapping || jsonb_build_object('code', prod.code, 'name', nm);
   end loop;
 
-  return json_build_object('imported', ok_n, 'errors', errs, 'mapping', mapping);
+  return json_build_object('imported', ok_n, 'errors', errs);
+end $$;
+
+-- 5i-2. List of products to pick from when assigning a blank code: the
+--       imported catalog, plus any product already in use on a printed
+--       code (in case it was set up by hand and never added to the catalog).
+create or replace function public.get_product_picker()
+returns json language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_team() then
+    raise exception 'Not authorised' using errcode = '42501';
+  end if;
+  return coalesce((
+    select json_agg(json_build_object(
+             'name', t.name, 'category', t.category, 'description', t.description
+           ) order by t.name)
+    from (
+      select distinct on (lower(x.name)) x.name, x.category, x.description
+      from (
+        select name, category, description, 0 as pri from public.product_catalog
+        union all
+        select name, category, description, 1 as pri from public.products
+         where status = 'active' and name is not null
+      ) x
+      order by lower(x.name), x.pri
+    ) t
+  ), '[]'::json);
 end $$;
 
 -- 5j. Admin: numbers for the dashboard.
@@ -534,7 +532,8 @@ grant execute on function public.find_recipient(text)     to authenticated;
 grant execute on function public.my_recent()              to authenticated;
 grant execute on function public.void_sample(uuid, text)  to authenticated;
 grant execute on function public.generate_codes(int, text) to authenticated;
-grant execute on function public.bulk_import(jsonb)       to authenticated;
+grant execute on function public.import_product_catalog(jsonb) to authenticated;
+grant execute on function public.get_product_picker()     to authenticated;
 grant execute on function public.admin_stats()            to authenticated;
 grant execute on function public.reset_for_new_event(text) to authenticated;
 

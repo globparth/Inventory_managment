@@ -23,21 +23,17 @@ export default function Assign() {
     async function load() {
       setLoading(true)
       try {
-        const [blankRes, productRes] = await Promise.all([
+        const [blankRes, pickerRes] = await Promise.all([
           supabase.from('products').select('code').eq('status', 'unassigned').order('seq').limit(200),
-          supabase.from('products').select('name, category, description').eq('status', 'active').not('name', 'is', null).order('name').limit(200),
+          supabase.rpc('get_product_picker'),
         ])
         if (blankRes.error) throw blankRes.error
-        if (productRes.error) throw productRes.error
+        if (pickerRes.error) throw pickerRes.error
         setBlankCodes(blankRes.data || [])
 
-        const seen = new Map()
-        for (const item of productRes.data || []) {
-          const name = (item.name || '').trim()
-          if (!name || seen.has(name)) continue
-          seen.set(name, { name, category: item.category || '', description: item.description || '' })
-        }
-        const rows = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
+        const rows = (pickerRes.data || []).map((item) => ({
+          name: item.name, category: item.category || '', description: item.description || '',
+        }))
         setExisting(rows)
         if (rows.length === 0) setProductMode('manual')
       } catch (e) {
