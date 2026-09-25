@@ -2,6 +2,7 @@ import { Link, NavLink, Route, Routes } from 'react-router-dom'
 import { useAuth } from '../../auth.jsx'
 import { Banner, Spinner } from '../../ui.jsx'
 import Dashboard from './Dashboard.jsx'
+import Assign from './Assign.jsx'
 import Products from './Products.jsx'
 import Import from './Import.jsx'
 import Labels from './Labels.jsx'
@@ -22,6 +23,7 @@ export default function Admin() {
     <>
       <nav className="tabs" aria-label="Admin sections">
         <NavLink to="/admin" end className={tab}>Dashboard</NavLink>
+        <NavLink to="/admin/assign" className={tab}>Assign product</NavLink>
         <NavLink to="/admin/products" className={tab}>Products</NavLink>
         <NavLink to="/admin/import" className={tab}>Import</NavLink>
         <NavLink to="/admin/labels" className={tab}>QR labels</NavLink>
@@ -30,6 +32,7 @@ export default function Admin() {
       </nav>
       <Routes>
         <Route index element={<Dashboard />} />
+        <Route path="assign" element={<Assign />} />
         <Route path="products" element={<Products />} />
         <Route path="import" element={<Import />} />
         <Route path="labels" element={<Labels />} />

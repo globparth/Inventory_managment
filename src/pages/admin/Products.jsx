@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../supabase'
 import { Banner, Field, Modal, Spinner, useToast } from '../../ui.jsx'
 
@@ -32,7 +33,13 @@ export default function Products() {
 
   return (
     <main className="page wide">
-      <div className="row spread wrap"><h1>Products</h1><span className="muted">{count} codes</span></div>
+      <div className="row spread wrap">
+        <h1>Products</h1>
+        <div className="row wrap">
+          <Link className="btn primary sm" to="/admin/assign">Assign product</Link>
+          <span className="muted">{count} codes</span>
+        </div>
+      </div>
       <div className="row wrap">
         <input className="input grow" style={{ minWidth: 200 }} placeholder="Search name, code or category" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="input" style={{ width: 'auto' }} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter">
