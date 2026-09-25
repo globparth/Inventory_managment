@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { distinctProducts } from '../../offline'
+import { extractCode } from '../../lib/util'
 import { supabase } from '../../supabase'
 import { Banner, Field, Spinner, useToast } from '../../ui.jsx'
+
+const Scanner = lazy(() => import('../../Scanner.jsx'))
 
 export default function Assign() {
   const [blankCodes, setBlankCodes] = useState([])
@@ -13,6 +16,7 @@ export default function Assign() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [scanning, setScanning] = useState(false)
   const [toast, toastNode] = useToast()
 
   useEffect(() => {
@@ -36,6 +40,23 @@ export default function Assign() {
   }, [])
 
   const setField = (key) => (e) => setForm((s) => ({ ...s, [key]: e.target.value }))
+
+  function handleScanned(raw) {
+    const result = extractCode(raw)
+    if (!result) {
+      setErr('That does not look like a QR code for a blank label.')
+      setScanning(false)
+      return
+    }
+    if (!blankCodes.some((item) => item.code === result)) {
+      setErr(`Code ${result} is already assigned or not in the blank-code list.`)
+      setScanning(false)
+      return
+    }
+    setCode(result)
+    setErr('')
+    setScanning(false)
+  }
 
   function pickExistingProduct(e) {
     const name = e.target.value
@@ -95,14 +116,25 @@ export default function Assign() {
       )}
       {err && <Banner kind="error">{err}</Banner>}
 
+      {scanning ? (
+        <div className="card stack">
+          <Suspense fallback={<Spinner label="Starting camera" />}>
+            <Scanner onCode={handleScanned} onCancel={() => setScanning(false)} />
+          </Suspense>
+        </div>
+      ) : null}
+
       <form className="card stack" onSubmit={save} noValidate>
         <Field label="Blank code" htmlFor="assign-code" hint="Pick a code that has not been linked to a product yet.">
-          <select id="assign-code" className="input" value={code} onChange={(e) => setCode(e.target.value)}>
-            <option value="">Select a blank code</option>
-            {blankCodes.map((item) => (
-              <option key={item.code} value={item.code}>{item.code}</option>
-            ))}
-          </select>
+          <div className="row">
+            <select id="assign-code" className="input grow" value={code} onChange={(e) => setCode(e.target.value)}>
+              <option value="">Select a blank code</option>
+              {blankCodes.map((item) => (
+                <option key={item.code} value={item.code}>{item.code}</option>
+              ))}
+            </select>
+            <button type="button" className="btn ghost" onClick={() => { setErr(''); setScanning(true) }}>Scan QR</button>
+          </div>
         </Field>
 
         {existing.length > 0 && (
