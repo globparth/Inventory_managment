@@ -119,8 +119,10 @@ export function catalogAge() {
 export async function distinctProducts() {
   const { data, error } = await supabase.rpc('get_product_picker')
   if (!error && Array.isArray(data)) {
-    return data.map((item) => ({ name: item.name, category: item.category || '', description: item.description || '' }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+    return data.map((item) => ({
+      name: item.name, category: item.category || '', description: item.description || '',
+      assigned: item.assigned || 0, given: item.given || 0,
+    })).sort((a, b) => a.name.localeCompare(b.name))
   }
   const rows = Object.values(JSON.parse(localStorage.getItem(CATALOG_KEY) || 'null')?.items || {})
   const seen = new Map()

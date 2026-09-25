@@ -12,7 +12,7 @@ export default function Assign() {
   const [existing, setExisting] = useState([])
   const [picked, setPicked] = useState('')
   const [productMode, setProductMode] = useState('manual')
-  const [form, setForm] = useState({ name: '', category: '', description: '', total: '0' })
+  const [form, setForm] = useState({ name: '', category: '', description: '' })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
@@ -33,6 +33,7 @@ export default function Assign() {
 
         const rows = (pickerRes.data || []).map((item) => ({
           name: item.name, category: item.category || '', description: item.description || '',
+          assigned: item.assigned || 0, given: item.given || 0,
         }))
         setExisting(rows)
         if (rows.length === 0) setProductMode('manual')
@@ -80,6 +81,7 @@ export default function Assign() {
   function startManualEntry() {
     setPicked('')
     setProductMode('manual')
+    setForm({ name: '', category: '', description: '' })
   }
 
   async function save(e) {
@@ -87,41 +89,55 @@ export default function Assign() {
     setErr('')
 
     const trimmedCode = code.trim().toUpperCase()
+    const trimmedName = form.name.trim()
     if (!trimmedCode) return setErr('Choose a blank code to assign.')
-    if (!form.name.trim()) return setErr('Enter the product name.')
-
-    const total = Number.parseInt(form.total, 10)
-    if (!Number.isInteger(total) || total < 0) return setErr('Enter how many samples you have (0 or more).')
+    if (!trimmedName) return setErr('Enter the product name.')
 
     setBusy(true)
+    // Every code is one sample unit, so the count of codes assigned to a
+    // product IS its stock -- there is nothing to type in here.
     const { data, error } = await supabase.rpc('save_product', {
       p_code: trimmedCode,
-      p_name: form.name,
+      p_name: trimmedName,
       p_category: form.category,
       p_description: form.description,
-      p_total: total,
+      p_total: 1,
     })
     setBusy(false)
 
     if (error) return setErr(error.message)
     if (!data?.ok) return setErr(data?.error || 'Could not assign this product.')
 
-    toast('Product assigned')
+    toast(`Assigned to ${trimmedName}`)
     setCode('')
-    setPicked('')
-    setForm({ name: '', category: '', description: '', total: '0' })
-    const nextBlank = blankCodes.filter((item) => item.code !== trimmedCode)
-    setBlankCodes(nextBlank)
+    setBlankCodes((rows) => rows.filter((item) => item.code !== trimmedCode))
+
+    // Keep the same product selected -- scanning the next label for the same
+    // product needs no re-picking -- and bump its running count right away.
+    setExisting((rows) => {
+      const i = rows.findIndex((r) => r.name.toLowerCase() === trimmedName.toLowerCase())
+      if (i === -1) {
+        const added = { name: trimmedName, category: form.category || '', description: form.description || '', assigned: 1, given: 0 }
+        return [...rows, added].sort((a, b) => a.name.localeCompare(b.name))
+      }
+      const copy = [...rows]
+      copy[i] = { ...copy[i], assigned: copy[i].assigned + 1 }
+      return copy
+    })
+    setPicked(trimmedName)
+    setProductMode('existing')
   }
 
   if (loading) return <main className="page"><Spinner label="Loading blank codes" /></main>
+
+  const count = existing.find((x) => x.name.toLowerCase() === form.name.trim().toLowerCase())
 
   return (
     <main className="page wide">
       <div className="row spread wrap">
         <div>
           <h1>Assign product to a blank code</h1>
-          <p className="muted">Link a printed QR label to a product so it is ready to scan.</p>
+          <p className="muted">Link a printed QR label to a product so it is ready to scan. Each code is one sample -- the count below is how many codes you've assigned to a product.</p>
         </div>
         <Link className="btn ghost sm" to="/admin/products">Back to products</Link>
       </div>
@@ -158,7 +174,9 @@ export default function Assign() {
               <select id="assign-pick" className="input grow" value={picked} onChange={pickExistingProduct}>
                 <option value="">{productMode === 'existing' ? 'Choose a saved product' : 'Select a product from the list'}</option>
                 {existing.map((item) => (
-                  <option key={item.name} value={item.name}>{item.name}{item.category ? ` (${item.category})` : ''}</option>
+                  <option key={item.name} value={item.name}>
+                    {item.name}{item.category ? ` (${item.category})` : ''} — {item.assigned} assigned
+                  </option>
                 ))}
               </select>
               {productMode === 'existing' && (
@@ -172,12 +190,15 @@ export default function Assign() {
           <input id="assign-name" className="input" value={form.name} onChange={setField('name')} />
         </Field>
 
+        {count && (
+          <p className="muted small" style={{ margin: 0 }}>
+            <strong>{count.assigned}</strong> code{count.assigned === 1 ? '' : 's'} already assigned to this product
+            {count.given > 0 ? `, ${count.given} given out` : ''}.
+          </p>
+        )}
+
         <Field label="Category" htmlFor="assign-category">
           <input id="assign-category" className="input" value={form.category} onChange={setField('category')} placeholder="Rice, spices, pulses…" />
-        </Field>
-
-        <Field label="Samples in stock" htmlFor="assign-total">
-          <input id="assign-total" className="input" type="number" inputMode="numeric" min="0" value={form.total} onChange={setField('total')} />
         </Field>
 
         <Field label="Description" htmlFor="assign-desc" hint="Shown to anyone who scans the label.">
@@ -188,8 +209,8 @@ export default function Assign() {
           <button type="button" className="btn ghost" onClick={() => {
             setCode('')
             setPicked('')
-            setProductMode(existing.length > 0 ? 'manual' : 'manual')
-            setForm({ name: '', category: '', description: '', total: '0' })
+            setProductMode('manual')
+            setForm({ name: '', category: '', description: '' })
             setErr('')
           }}>Clear</button>
           {existing.length > 0 && productMode === 'manual' && (

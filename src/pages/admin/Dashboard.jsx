@@ -41,12 +41,12 @@ export default function Dashboard() {
 
       <div className="two">
         <section className="card">
-          <div className="section-title"><h2>Running low</h2><span className="muted small">5 or fewer left</span></div>
-          {s.low_stock.length === 0 ? <p className="muted">Nothing is running low.</p> : (
+          <div className="section-title"><h2>By product</h2><span className="muted small">codes assigned, given, left</span></div>
+          {s.by_product.length === 0 ? <p className="muted">No products assigned yet.</p> : (
             <ul className="list">
-              {s.low_stock.map((x) => (
-                <li key={x.code}>
-                  <div className="grow"><strong>{x.name}</strong> <span className="mono muted small">{x.code}</span></div>
+              {s.by_product.map((x) => (
+                <li key={x.name}>
+                  <div className="grow"><strong>{x.name}</strong> <span className="muted small">{x.total} assigned</span></div>
                   <span className={`tag ${x.left_n === 0 ? 'bad' : 'warn'}`}>{x.left_n === 0 ? 'Out' : `${x.left_n} left`}</span>
                 </li>
               ))}

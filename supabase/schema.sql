@@ -437,6 +437,8 @@ end $$;
 -- 5i-2. List of products to pick from when assigning a blank code: the
 --       imported catalog, plus any product already in use on a printed
 --       code (in case it was set up by hand and never added to the catalog).
+--       "assigned" / "given" count active codes carrying that name -- each
+--       code is exactly one sample unit, so "assigned" IS the stock count.
 create or replace function public.get_product_picker()
 returns json language plpgsql stable security definer set search_path = public as $$
 begin
@@ -445,7 +447,8 @@ begin
   end if;
   return coalesce((
     select json_agg(json_build_object(
-             'name', t.name, 'category', t.category, 'description', t.description
+             'name', t.name, 'category', t.category, 'description', t.description,
+             'assigned', coalesce(c.assigned, 0), 'given', coalesce(c.given, 0)
            ) order by t.name)
     from (
       select distinct on (lower(x.name)) x.name, x.category, x.description
@@ -457,6 +460,12 @@ begin
       ) x
       order by lower(x.name), x.pri
     ) t
+    left join (
+      select name, count(*) as assigned, count(*) filter (where samples_given > 0) as given
+      from public.products
+      where status = 'active' and name is not null
+      group by name
+    ) c on c.name = t.name
   ), '[]'::json);
 end $$;
 
@@ -479,11 +488,13 @@ begin
     'by_member', (select coalesce(json_agg(t), '[]'::json) from (
         select coalesce(given_by_name, 'Unknown') as name, count(*) as n
         from public.sample_log where not voided group by 1 order by 2 desc limit 20) t),
-    'low_stock', (select coalesce(json_agg(t), '[]'::json) from (
-        select code, name, total_samples - samples_given as left_n, total_samples
+    'by_product', (select coalesce(json_agg(t), '[]'::json) from (
+        select name, count(*) as total, count(*) filter (where samples_given > 0) as given,
+               count(*) filter (where samples_given = 0) as left_n
         from public.products
-        where status = 'active' and total_samples - samples_given <= 5
-        order by total_samples - samples_given, name limit 40) t)
+        where status = 'active' and name is not null
+        group by name
+        order by left_n, name limit 40) t)
   );
 end $$;
 

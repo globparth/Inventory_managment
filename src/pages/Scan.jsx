@@ -259,7 +259,10 @@ function GiveForm({ code, p, offline, isAdmin, onEdit, onDone }) {
   )
 }
 
-/* Filling in a blank code (team) or editing a product (admin). */
+/* Filling in a blank code (team) or editing a product (admin). Each blank
+   code is exactly one sample unit -- a fresh one is always saved with a
+   stock of 1, no typing required. Editing an already-set-up code still
+   allows changing its stock, for the rare code set up before this rule. */
 function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
   const [f, setF] = useState({
     name: initial.name || '', category: initial.category || '', description: initial.description || '',
@@ -267,7 +270,7 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
   })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const [existing, setExisting] = useState(null)   // list of {name, category, description}, once loaded
+  const [existing, setExisting] = useState(null)   // list of {name, category, description, assigned, given}, once loaded
   const [picked, setPicked] = useState('')          // which one is selected in the dropdown, '' = new product
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
 
@@ -288,8 +291,11 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
     e.preventDefault()
     setErr('')
     if (!f.name.trim()) return setErr('Enter the product name.')
-    const total = Number.parseInt(f.total, 10)
-    if (!Number.isInteger(total) || total < 0) return setErr('Enter how many samples you have (0 or more).')
+    let total = 1
+    if (!isNew) {
+      total = Number.parseInt(f.total, 10)
+      if (!Number.isInteger(total) || total < 0) return setErr('Enter how many samples you have (0 or more).')
+    }
     setBusy(true)
     const { data, error } = await supabase.rpc('save_product', {
       p_code: code, p_name: f.name, p_category: f.category, p_description: f.description, p_total: total,
@@ -299,6 +305,8 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
     if (!data?.ok) return setErr(data?.error || 'Could not save')
     onSaved()
   }
+
+  const count = isNew ? existing?.find((x) => x.name.toLowerCase() === f.name.trim().toLowerCase()) : null
 
   return (
     <form className="card stack" onSubmit={save} noValidate>
@@ -310,15 +318,23 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
         <Field label="Product" htmlFor="pexisting" hint="Optional — pick one to fill in the details below, then edit them if you need to. Or leave this as it is and just type the details below yourself.">
           <select id="pexisting" className="input" value={picked} onChange={pick}>
             <option value="">Fill in manually</option>
-            {existing.map((p) => <option key={p.name} value={p.name}>{p.name}{p.category ? ` (${p.category})` : ''}</option>)}
+            {existing.map((p) => <option key={p.name} value={p.name}>{p.name}{p.category ? ` (${p.category})` : ''} — {p.assigned} assigned</option>)}
           </select>
         </Field>
       )}
       <Field label="Product name" htmlFor="pn"><input id="pn" className="input" value={f.name} onChange={set('name')} /></Field>
+      {count && (
+        <p className="muted small" style={{ margin: 0 }}>
+          <strong>{count.assigned}</strong> code{count.assigned === 1 ? '' : 's'} already assigned to this product
+          {count.given > 0 ? `, ${count.given} given out` : ''}.
+        </p>
+      )}
       <Field label="Category" htmlFor="pc"><input id="pc" className="input" value={f.category} onChange={set('category')} placeholder="Rice, spices, pulses…" /></Field>
-      <Field label="Samples in stock" htmlFor="pt" hint="Total number of samples you have for this product.">
-        <input id="pt" className="input" type="number" inputMode="numeric" min="0" value={f.total} onChange={set('total')} />
-      </Field>
+      {!isNew && (
+        <Field label="Samples in stock" htmlFor="pt" hint="Total number of samples you have for this product.">
+          <input id="pt" className="input" type="number" inputMode="numeric" min="0" value={f.total} onChange={set('total')} />
+        </Field>
+      )}
       <Field label="Description" htmlFor="pd" hint="Shown to anyone who scans the label.">
         <textarea id="pd" className="input" value={f.description} onChange={set('description')} />
       </Field>
