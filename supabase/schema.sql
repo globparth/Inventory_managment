@@ -147,12 +147,18 @@ create policy "sample_log: admin read" on public.sample_log
 -- ---------------------------------------------------------------------
 
 -- 5a. What a scan shows. Public gets product info only. Team also gets counts.
+--     Every code is one sample unit, so the stock shown here is the whole
+--     product's -- every active code sharing this product's name, not just
+--     this one label -- and "code_given" says whether THIS specific label
+--     has already been handed out (it can only ever give once).
 create or replace function public.scan_product(p_code text)
 returns json language plpgsql stable security definer set search_path = public as $$
 declare
-  p    public.products%rowtype;
-  res  jsonb;
-  team boolean := public.is_team();
+  p         public.products%rowtype;
+  res       jsonb;
+  team      boolean := public.is_team();
+  agg_total int := 0;
+  agg_given int := 0;
 begin
   select * into p from public.products where code = upper(trim(p_code));
   if not found then
@@ -166,17 +172,26 @@ begin
   );
 
   if team then
+    if p.name is not null then
+      select count(*), count(*) filter (where samples_given > 0)
+        into agg_total, agg_given
+        from public.products
+       where status = 'active' and name = p.name;
+    end if;
+
     res := res || jsonb_build_object(
-      'total', p.total_samples,
-      'given', p.samples_given,
-      'left',  p.total_samples - p.samples_given,
-      'next_no', p.next_sample_no,
+      'total', agg_total,
+      'given', agg_given,
+      'left',  agg_total - agg_given,
+      'next_no', agg_given + 1,
+      'code_given', p.samples_given > 0,
       'recent', coalesce((
         select jsonb_agg(x) from (
-          select sample_no, recipient_name, given_by_name, given_at
-          from public.sample_log
-          where product_id = p.id and not voided
-          order by sample_no desc limit 5
+          select l.sample_no, l.recipient_name, l.given_by_name, l.given_at
+          from public.sample_log l
+          join public.products pp on pp.id = l.product_id
+          where pp.name = p.name and pp.status = 'active' and not l.voided
+          order by l.given_at desc limit 5
         ) x), '[]'::jsonb)
     );
   end if;
@@ -184,18 +199,22 @@ begin
   return res::json;
 end $$;
 
--- 5b. Give one sample. Locks the product row so two people scanning at the
---     same moment can never get the same sample number.
+-- 5b. Give one sample. Locks the specific scanned code so two people
+--     scanning it at the same moment can never both give from it -- but the
+--     "left"/"sample_no" reported back are for the whole product (every
+--     active code sharing this name), since that is the stock that matters.
 create or replace function public.give_sample(
   p_code text, p_name text, p_phone text, p_email text, p_company text,
   p_notes text, p_client_id uuid, p_given_at timestamptz default null
 ) returns json language plpgsql security definer set search_path = public as $$
 declare
-  p        public.products%rowtype;
-  dup      public.sample_log%rowtype;
-  n        int;
-  who      text;
-  digits   text := regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g');
+  p         public.products%rowtype;
+  dup       public.sample_log%rowtype;
+  n         int;
+  who       text;
+  digits    text := regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g');
+  agg_total int;
+  agg_given int;
 begin
   if not public.is_team() then
     raise exception 'Not authorised' using errcode = '42501';
@@ -216,15 +235,17 @@ begin
   -- already saved (retry after a bad connection)? report success, do nothing.
   select * into dup from public.sample_log where client_id = p_client_id;
   if found then
+    select count(*), count(*) filter (where samples_given > 0) into agg_total, agg_given
+      from public.products where status = 'active' and name = p.name;
     return json_build_object('ok', true, 'duplicate', true, 'product', p.name,
-      'sample_no', dup.sample_no, 'left', p.total_samples - p.samples_given);
+      'sample_no', dup.sample_no, 'left', agg_total - agg_given);
   end if;
 
   if p.status <> 'active' then
     return json_build_object('ok', false, 'error', 'This product has not been set up yet');
   end if;
   if p.samples_given >= p.total_samples then
-    return json_build_object('ok', false, 'error', 'No samples left for this product');
+    return json_build_object('ok', false, 'error', 'This label has already been given out. Scan a different label for this product.');
   end if;
 
   n := p.next_sample_no;
@@ -242,8 +263,11 @@ begin
           nullif(trim(coalesce(p_company, '')), ''), nullif(trim(coalesce(p_notes, '')), ''),
           auth.uid(), who, least(coalesce(p_given_at, now()), now()), p_client_id);
 
-  return json_build_object('ok', true, 'product', p.name, 'sample_no', n,
-                           'left', p.total_samples - p.samples_given - 1);
+  select count(*), count(*) filter (where samples_given > 0) into agg_total, agg_given
+    from public.products where status = 'active' and name = p.name;
+
+  return json_build_object('ok', true, 'product', p.name, 'sample_no', agg_given,
+                           'left', agg_total - agg_given);
 end $$;
 
 -- 5c. Set up / edit a product. Team can fill in a blank code; only admins can edit a live one.

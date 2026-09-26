@@ -156,6 +156,10 @@ function GiveForm({ code, p, offline, isAdmin, onEdit, onDone }) {
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
 
   const soldOut = !offline && p.left <= 0
+  // This one label was already handed out (each is single-use), even though
+  // the product overall may still have stock under a different label.
+  const usedLabel = !offline && !soldOut && p.code_given
+  const blocked = soldOut || usedLabel
 
   async function lookupPhone() {
     const digits = f.phone.replace(/\D/g, '')
@@ -205,8 +209,10 @@ function GiveForm({ code, p, offline, isAdmin, onEdit, onDone }) {
         </div>
       )}
 
-      {soldOut ? (
-        <Banner kind="error">No samples left for this product.</Banner>
+      {blocked ? (
+        <Banner kind="error">
+          {soldOut ? 'No samples left for this product.' : 'This label has already been given out. Scan a different label for this product to give another.'}
+        </Banner>
       ) : (
         <form id="give" className="card stack" onSubmit={submit} noValidate>
           <h2>Who is receiving it?</h2>
@@ -234,7 +240,7 @@ function GiveForm({ code, p, offline, isAdmin, onEdit, onDone }) {
         </form>
       )}
 
-      {!soldOut && (
+      {!blocked && (
         <div className="actionbar"><div>
           <button className="btn primary block" form="give" type="submit" disabled={busy}>
             {busy ? 'Saving…' : offline ? 'Save sample on this phone' : `Give sample ${pad3(p.next_no)}`}
