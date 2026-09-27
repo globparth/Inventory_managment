@@ -49,21 +49,24 @@ export default function Assign() {
 
   const setField = (key) => (e) => setForm((s) => ({ ...s, [key]: e.target.value }))
 
-  function handleScanned(raw) {
+  async function handleScanned(raw) {
     const result = extractCode(raw)
+    setScanning(false)
     if (!result) {
       setErr('That does not look like a QR code for a blank label.')
-      setScanning(false)
       return
     }
-    if (!blankCodes.some((item) => item.code === result)) {
-      setErr(`Code ${result} is already assigned or not in the blank-code list.`)
-      setScanning(false)
-      return
-    }
+    // Check the live database for this one code, not the capped 200-code
+    // list used for the dropdown -- with thousands of codes, a scanned one
+    // is very often outside that first page and would be wrongly rejected.
+    const { data, error } = await supabase.from('products').select('code, status').eq('code', result).maybeSingle()
+    if (error) { setErr(error.message); return }
+    if (!data) { setErr(`Code ${result} was not found. Check the label and try again.`); return }
+    if (data.status !== 'unassigned') { setErr(`Code ${result} is already assigned to a product.`); return }
+
+    setBlankCodes((rows) => (rows.some((item) => item.code === result) ? rows : [...rows, { code: result }]))
     setCode(result)
     setErr('')
-    setScanning(false)
   }
 
   function pickExistingProduct(e) {
