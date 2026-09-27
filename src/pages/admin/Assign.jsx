@@ -9,6 +9,7 @@ const Scanner = lazy(() => import('../../Scanner.jsx'))
 export default function Assign() {
   const [blankCodes, setBlankCodes] = useState([])
   const [code, setCode] = useState('')
+  const [correcting, setCorrecting] = useState(null)   // {code, name, given} of an already-assigned code being fixed
   const [existing, setExisting] = useState([])
   const [picked, setPicked] = useState('')
   const [search, setSearch] = useState('')
@@ -59,12 +60,25 @@ export default function Assign() {
     // Check the live database for this one code, not the capped 200-code
     // list used for the dropdown -- with thousands of codes, a scanned one
     // is very often outside that first page and would be wrongly rejected.
-    const { data, error } = await supabase.from('products').select('code, status').eq('code', result).maybeSingle()
+    const { data, error } = await supabase.from('products')
+      .select('code, status, name, category, description, samples_given').eq('code', result).maybeSingle()
     if (error) { setErr(error.message); return }
     if (!data) { setErr(`Code ${result} was not found. Check the label and try again.`); return }
-    if (data.status !== 'unassigned') { setErr(`Code ${result} is already assigned to a product.`); return }
 
-    setBlankCodes((rows) => (rows.some((item) => item.code === result) ? rows : [...rows, { code: result }]))
+    if (data.status === 'unassigned') {
+      setBlankCodes((rows) => (rows.some((item) => item.code === result) ? rows : [...rows, { code: result }]))
+      setCorrecting(null)
+      setCode(result)
+      setErr('')
+      return
+    }
+
+    // Already assigned -- let the admin correct it instead of just refusing.
+    setCorrecting({ code: result, name: data.name, given: data.samples_given > 0 })
+    setPicked('')
+    setSearch('')
+    setProductMode('manual')
+    setForm({ name: data.name || '', category: data.category || '', description: data.description || '' })
     setCode(result)
     setErr('')
   }
@@ -95,7 +109,7 @@ export default function Assign() {
 
     const trimmedCode = code.trim().toUpperCase()
     const trimmedName = form.name.trim()
-    if (!trimmedCode) return setErr('Choose a blank code to assign.')
+    if (!trimmedCode) return setErr('Scan or choose a code to assign.')
     if (!trimmedName) return setErr('Enter the product name.')
 
     setBusy(true)
@@ -113,23 +127,34 @@ export default function Assign() {
     if (error) return setErr(error.message)
     if (!data?.ok) return setErr(data?.error || 'Could not assign this product.')
 
-    toast(`${trimmedCode} → ${trimmedName}`)
+    toast(correcting ? `${trimmedCode} corrected → ${trimmedName}` : `${trimmedCode} → ${trimmedName}`)
     setBlankCodes((rows) => rows.filter((item) => item.code !== trimmedCode))
 
-    // Bump the running count for this product so the list stays accurate,
-    // but always clear the form afterwards -- every code needs its own
-    // explicit pick, so a leftover selection can never get reused by mistake.
+    // Keep the running per-product counts accurate: a fresh blank-code
+    // assignment adds one to the target product; correcting a wrongly
+    // assigned code moves one from its old (wrong) product to the new one
+    // -- or touches nothing if only the category/description was fixed.
+    const oldName = correcting?.name
+    const sameName = oldName && oldName.toLowerCase() === trimmedName.toLowerCase()
     setExisting((rows) => {
-      const i = rows.findIndex((r) => r.name.toLowerCase() === trimmedName.toLowerCase())
-      if (i === -1) {
-        const added = { name: trimmedName, category: form.category || '', description: form.description || '', assigned: 1, given: 0 }
-        return [...rows, added].sort((a, b) => a.name.localeCompare(b.name))
+      let next = rows
+      if (oldName && !sameName) {
+        next = next.map((r) => (r.name.toLowerCase() === oldName.toLowerCase()
+          ? { ...r, assigned: Math.max(0, r.assigned - 1), given: correcting.given ? Math.max(0, r.given - 1) : r.given }
+          : r))
       }
-      const copy = [...rows]
-      copy[i] = { ...copy[i], assigned: copy[i].assigned + 1 }
+      if (sameName) return next
+      const i = next.findIndex((r) => r.name.toLowerCase() === trimmedName.toLowerCase())
+      if (i === -1) {
+        const added = { name: trimmedName, category: form.category || '', description: form.description || '', assigned: 1, given: correcting?.given ? 1 : 0 }
+        return [...next, added].sort((a, b) => a.name.localeCompare(b.name))
+      }
+      const copy = [...next]
+      copy[i] = { ...copy[i], assigned: copy[i].assigned + 1, given: copy[i].given + (correcting?.given ? 1 : 0) }
       return copy
     })
     setCode('')
+    setCorrecting(null)
     setPicked('')
     setSearch('')
     setForm({ name: '', category: '', description: '' })
@@ -151,8 +176,13 @@ export default function Assign() {
         <Link className="btn ghost sm" to="/admin/products">Back to products</Link>
       </div>
 
-      {blankCodes.length === 0 && (
+      {blankCodes.length === 0 && !correcting && (
         <Banner kind="warn">There are no blank QR codes left to assign. Generate more labels from the QR labels section.</Banner>
+      )}
+      {correcting && (
+        <Banner kind="warn">
+          Code {correcting.code} is already assigned to <strong>{correcting.name}</strong>. Fix the details below and save to correct it.
+        </Banner>
       )}
       {err && <Banner kind="error">{err}</Banner>}
 
@@ -165,9 +195,10 @@ export default function Assign() {
       ) : null}
 
       <form className="card stack" onSubmit={save} noValidate>
-        <Field label="Blank code" htmlFor="assign-code" hint="Pick a code that has not been linked to a product yet.">
+        <Field label="Code" htmlFor="assign-code" hint="Pick a blank code to assign, or scan an already-assigned code to correct it.">
           <div className="row">
-            <select id="assign-code" className="input grow" value={code} onChange={(e) => setCode(e.target.value)}>
+            <select id="assign-code" className="input grow" value={correcting ? '' : code}
+              onChange={(e) => { setCorrecting(null); setCode(e.target.value) }}>
               <option value="">Select a blank code</option>
               {blankCodes.map((item) => (
                 <option key={item.code} value={item.code}>{item.code}</option>
@@ -221,6 +252,7 @@ export default function Assign() {
         <div className="row">
           <button type="button" className="btn ghost" onClick={() => {
             setCode('')
+            setCorrecting(null)
             setPicked('')
             setSearch('')
             setProductMode('manual')
@@ -230,8 +262,8 @@ export default function Assign() {
           {existing.length > 0 && productMode === 'manual' && (
             <button type="button" className="btn ghost" onClick={() => setProductMode('existing')}>Use existing product</button>
           )}
-          <button className="btn primary grow" type="submit" disabled={busy || blankCodes.length === 0}>
-            {busy ? 'Assigning…' : 'Assign product'}
+          <button className="btn primary grow" type="submit" disabled={busy || !code}>
+            {busy ? 'Saving…' : correcting ? 'Save correction' : 'Assign product'}
           </button>
         </div>
       </form>
