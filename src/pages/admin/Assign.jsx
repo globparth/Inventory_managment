@@ -11,6 +11,7 @@ export default function Assign() {
   const [code, setCode] = useState('')
   const [existing, setExisting] = useState([])
   const [picked, setPicked] = useState('')
+  const [search, setSearch] = useState('')
   const [productMode, setProductMode] = useState('manual')
   const [form, setForm] = useState({ name: '', category: '', description: '' })
   const [busy, setBusy] = useState(false)
@@ -80,6 +81,7 @@ export default function Assign() {
 
   function startManualEntry() {
     setPicked('')
+    setSearch('')
     setProductMode('manual')
     setForm({ name: '', category: '', description: '' })
   }
@@ -126,12 +128,15 @@ export default function Assign() {
     })
     setCode('')
     setPicked('')
+    setSearch('')
     setForm({ name: '', category: '', description: '' })
   }
 
   if (loading) return <main className="page"><Spinner label="Loading blank codes" /></main>
 
   const count = existing.find((x) => x.name.toLowerCase() === form.name.trim().toLowerCase())
+  const term = search.trim().toLowerCase()
+  const filtered = term ? existing.filter((item) => item.name.toLowerCase().includes(term)) : existing
 
   return (
     <main className="page wide">
@@ -170,19 +175,23 @@ export default function Assign() {
         </Field>
 
         {existing.length > 0 && (
-          <Field label={productMode === 'existing' ? 'Use existing product' : 'Select product'} htmlFor="assign-pick" hint="Choose a product already listed in the app, or switch to manual entry below.">
-            <div className="row">
-              <select id="assign-pick" className="input grow" value={picked} onChange={pickExistingProduct}>
-                <option value="">{productMode === 'existing' ? 'Choose a saved product' : 'Select a product from the list'}</option>
-                {existing.map((item) => (
-                  <option key={item.name} value={item.name}>
-                    {item.name}{item.category ? ` (${item.category})` : ''} — {item.assigned} assigned
-                  </option>
-                ))}
-              </select>
-              {productMode === 'existing' && (
-                <button type="button" className="btn ghost" onClick={startManualEntry}>Enter manually</button>
-              )}
+          <Field label={productMode === 'existing' ? 'Use existing product' : 'Select product'} htmlFor="assign-pick" hint="Search to narrow the list, then pick one. Or switch to manual entry below to add a brand new product.">
+            <div className="stack" style={{ gap: 6 }}>
+              <input className="input" placeholder={`Search ${existing.length} products…`} value={search}
+                onChange={(e) => setSearch(e.target.value)} aria-label="Search products" />
+              <div className="row">
+                <select id="assign-pick" className="input grow" value={picked} onChange={pickExistingProduct}>
+                  <option value="">{filtered.length ? (productMode === 'existing' ? 'Choose a saved product' : 'Select a product from the list') : 'No products match your search'}</option>
+                  {filtered.map((item) => (
+                    <option key={item.name} value={item.name}>
+                      {item.name}{item.category ? ` (${item.category})` : ''} — {item.assigned} assigned
+                    </option>
+                  ))}
+                </select>
+                {productMode === 'existing' && (
+                  <button type="button" className="btn ghost" onClick={startManualEntry}>Enter manually</button>
+                )}
+              </div>
             </div>
           </Field>
         )}
@@ -210,6 +219,7 @@ export default function Assign() {
           <button type="button" className="btn ghost" onClick={() => {
             setCode('')
             setPicked('')
+            setSearch('')
             setProductMode('manual')
             setForm({ name: '', category: '', description: '' })
             setErr('')

@@ -278,6 +278,7 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
   const [err, setErr] = useState('')
   const [existing, setExisting] = useState(null)   // list of {name, category, description, assigned, given}, once loaded
   const [picked, setPicked] = useState('')          // which one is selected in the dropdown, '' = new product
+  const [search, setSearch] = useState('')
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
 
   useEffect(() => {
@@ -313,6 +314,8 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
   }
 
   const count = isNew ? existing?.find((x) => x.name.toLowerCase() === f.name.trim().toLowerCase()) : null
+  const term = search.trim().toLowerCase()
+  const filtered = existing ? (term ? existing.filter((p) => p.name.toLowerCase().includes(term)) : existing) : []
 
   return (
     <form className="card stack" onSubmit={save} noValidate>
@@ -321,11 +324,15 @@ function SetupForm({ code, initial, isNew, offline, onSaved, onCancel }) {
       {isNew && <p className="muted">This label has no product yet. Fill it in and it is ready to use straight away.</p>}
       {offline && <Banner kind="warn">You are offline. Setting up a product needs a connection.</Banner>}
       {isNew && existing?.length > 0 && (
-        <Field label="Product" htmlFor="pexisting" hint="Optional — pick one to fill in the details below, then edit them if you need to. Or leave this as it is and just type the details below yourself.">
-          <select id="pexisting" className="input" value={picked} onChange={pick}>
-            <option value="">Fill in manually</option>
-            {existing.map((p) => <option key={p.name} value={p.name}>{p.name}{p.category ? ` (${p.category})` : ''} — {p.assigned} assigned</option>)}
-          </select>
+        <Field label="Product" htmlFor="pexisting" hint="Search to narrow the list, then pick one. Or leave this as it is and just type the details below to add a new product.">
+          <div className="stack" style={{ gap: 6 }}>
+            <input className="input" placeholder={`Search ${existing.length} products…`} value={search}
+              onChange={(e) => setSearch(e.target.value)} aria-label="Search products" />
+            <select id="pexisting" className="input" value={picked} onChange={pick}>
+              <option value="">{filtered.length ? 'Fill in manually' : 'No products match your search'}</option>
+              {filtered.map((p) => <option key={p.name} value={p.name}>{p.name}{p.category ? ` (${p.category})` : ''} — {p.assigned} assigned</option>)}
+            </select>
+          </div>
         </Field>
       )}
       <Field label="Product name" htmlFor="pn"><input id="pn" className="input" value={f.name} onChange={set('name')} /></Field>
