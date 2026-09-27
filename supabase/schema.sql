@@ -518,7 +518,7 @@ begin
         from public.products
         where status = 'active' and name is not null
         group by name
-        order by left_n, name limit 40) t)
+        order by left_n, name) t)
   );
 end $$;
 
