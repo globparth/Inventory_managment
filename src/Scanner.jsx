@@ -20,13 +20,14 @@ export default function Scanner({ onCode, onCancel }) {
       raf = requestAnimationFrame(tick)
       if (ts - last < 100 || video.readyState !== video.HAVE_ENOUGH_DATA) return
       last = ts
-      const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight))
+      if (!video.videoWidth || !video.videoHeight) return
+      const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight))
       const w = Math.round(video.videoWidth * scale)
       const h = Math.round(video.videoHeight * scale)
       canvas.width = w; canvas.height = h
       ctx.drawImage(video, 0, 0, w, h)
       const img = ctx.getImageData(0, 0, w, h)
-      const res = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' })
+      const res = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' })
       if (res?.data) {
         stopped = true
         if (navigator.vibrate) navigator.vibrate(60)
@@ -37,7 +38,12 @@ export default function Scanner({ onCode, onCancel }) {
     ;(async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false,
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 }, height: { ideal: 1280 },
+            advanced: [{ focusMode: 'continuous' }],
+          },
+          audio: false,
         })
         if (stopped) { stream.getTracks().forEach((t) => t.stop()); return }
         video.srcObject = stream
